@@ -1,0 +1,5 @@
+__pycache__/
+logs/
+*.zip
+bin/wintun/
+*.spec

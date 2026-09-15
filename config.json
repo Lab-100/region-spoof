@@ -1,0 +1,86 @@
+{
+  "region": "US",
+  "regions": [
+    {
+      "code": "US",
+      "name": "США"
+    },
+    {
+      "code": "DE",
+      "name": "Германия"
+    },
+    {
+      "code": "NL",
+      "name": "Нидерланды"
+    },
+    {
+      "code": "GB",
+      "name": "Великобритания"
+    },
+    {
+      "code": "FR",
+      "name": "Франция"
+    },
+    {
+      "code": "CH",
+      "name": "Швейцария"
+    },
+    {
+      "code": "SE",
+      "name": "Швеция"
+    },
+    {
+      "code": "FI",
+      "name": "Финляндия"
+    },
+    {
+      "code": "PL",
+      "name": "Польша"
+    },
+    {
+      "code": "IE",
+      "name": "Ирландия"
+    },
+    {
+      "code": "JP",
+      "name": "Япония"
+    },
+    {
+      "code": "SG",
+      "name": "Сингапур"
+    },
+    {
+      "code": "CA",
+      "name": "Канада"
+    },
+    {
+      "code": "ES",
+      "name": "Испания"
+    },
+    {
+      "code": "IT",
+      "name": "Италия"
+    },
+    {
+      "code": "AT",
+      "name": "Австрия"
+    },
+    {
+      "code": "BE",
+      "name": "Бельгия"
+    }
+  ],
+  "strategy": "system",
+  "strategies": [
+    "system",
+    "singbox",
+    "mihomo"
+  ],
+  "last_working": "system",
+  "zone": "foreign",
+  "proxy_port": 8888,
+  "check_interval_sec": 45,
+  "verify_timeout_sec": 18,
+  "failover_threshold": 3,
+  "auto_start": true
+}
