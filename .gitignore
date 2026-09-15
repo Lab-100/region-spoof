@@ -3,3 +3,7 @@ logs/
 *.zip
 bin/wintun/
 *.spec
+build/*/
+dist/
+out/
+*.log
