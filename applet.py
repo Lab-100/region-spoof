@@ -26,6 +26,7 @@ import subprocess
 import sys
 import threading
 import queue
+import re
 import time
 import winreg
 from pathlib import Path
@@ -392,6 +393,8 @@ class RegionSpoof:
         self._stop_event = threading.Event()
         self._engine_thread: Optional[threading.Thread] = None
         self._failures = 0
+        self._pb2_cache: Optional[dict] = None
+        self._pb2_mtime: float = 0.0
 
     # ------------------------------------------------------------------ состояние
     def snapshot(self) -> dict:
@@ -411,6 +414,81 @@ class RegionSpoof:
         p = self.pb2_proc
         return bool(p) and p.poll() is None
 
+    # ------------------------------------------------------------------ подбор прокси: статистика из лога
+    PB2_TAIL = 500000
+    PB2_ROTATE_AT = 3 * 1024 * 1024
+
+    def pb2_stats(self) -> dict:
+        """Парсит лог pb2 (DEBUG) и возвращает прокси и их источники.
+        При большом размере файл усекается (ротация хвоста)."""
+        logfile = LOG_DIR / "pb2.log"
+        try:
+            st = logfile.stat()
+            if self._pb2_mtime and st.st_mtime == self._pb2_mtime:
+                return self._pb2_cache
+            if st.st_size > self.PB2_ROTATE_AT:
+                try:
+                    with open(logfile, "rb") as f:
+                        f.seek(-self.PB2_TAIL, 2)
+                        tail = f.read()
+                    logfile.write_bytes(tail)
+                    st = logfile.stat()
+                except OSError:
+                    pass
+        except OSError:
+            return {"sources": [], "proxies": [], "working": 0, "total": 0}
+
+        data = ""
+        try:
+            if st.st_size <= self.PB2_TAIL:
+                data = logfile.read_text(encoding="utf-8", errors="replace")
+            else:
+                with open(logfile, "rb") as f:
+                    f.seek(-self.PB2_TAIL, 2)
+                    data = f.read().decode("utf-8", "replace")
+        except OSError:
+            data = ""
+
+        sources: dict = {}
+        proxies: list = []
+        total = 0
+        for line in data.splitlines():
+            m = re.search(r"(\d+)\((\d+)\) proxies added\(received\) from (\S+)", line)
+            if m:
+                url = m.group(3)
+                src = sources.setdefault(url, {"url": url, "added": 0, "received": 0})
+                src["added"] += int(m.group(1))
+                src["received"] = int(m.group(2)) or src["received"]
+                continue
+            m = re.search(
+                r"(\d{1,3}(?:\.\d{1,3}){3}):(\d+) \[([A-Za-z0-9:]+)\]: Get: (success|failed)",
+                line,
+            )
+            if m:
+                proxies.append(
+                    {
+                        "host": m.group(1),
+                        "port": int(m.group(2)),
+                        "type": m.group(3),
+                        "ok": m.group(4) == "success",
+                        "time": time.strftime("%H:%M:%S"),
+                    }
+                )
+                continue
+            m = re.search(r"Total found proxies: (\d+)", line)
+            if m:
+                total = int(m.group(1))
+
+        proxies = proxies[-300:]
+        self._pb2_mtime = st.st_mtime
+        self._pb2_cache = {
+            "sources": sorted(sources.values(), key=lambda x: -x["received"]),
+            "proxies": list(reversed(proxies)),
+            "working": sum(1 for p in proxies if p["ok"]),
+            "total": total,
+        }
+        return self._pb2_cache
+
     # ------------------------------------------------------------------ pb2
     def _start_pb2(self):
         if self.pb2_alive():
@@ -423,7 +501,7 @@ class RegionSpoof:
         args = [
             exe,
             "--timeout", str(self.cfg.get("pb2_timeout_sec", 10)),
-            "--log", "WARNING",
+            "--log", "DEBUG",
             "serve",
             "--host", "127.0.0.1",
             "--port", str(port),
@@ -433,8 +511,8 @@ class RegionSpoof:
             "--limit", str(self.cfg.get("pb2_limit", 40)),
         ]
         LOG_DIR.mkdir(exist_ok=True)
-        err = open(LOG_DIR / "pb2.log", "ab")
-        out = open(LOG_DIR / "pb2.out.log", "ab")
+        err = open(LOG_DIR / "pb2.log", "wb")
+        out = open(LOG_DIR / "pb2.out.log", "wb")
         try:
             self.pb2_proc = subprocess.Popen(
                 args,
@@ -937,6 +1015,7 @@ class AppGUI:
         self.cfg = cfg
         self.ctl = ctl
         self.quit_requested = False
+        self._seen_px: set = set()
 
         self.root = tk.Tk()
         self.root.title("Region Spoof — смена региона")
@@ -948,6 +1027,7 @@ class AppGUI:
 
         self._build_widgets()
         self._poll()
+        self._poll_proxy()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1030,15 +1110,57 @@ class AppGUI:
         self.strategy_box.pack(side="left", padx=(4, 0))
         self.strategy_box.bind("<<ComboboxSelected>>", self._on_strategy_change)
 
-        bot = ttk.Frame(self.root)
-        bot.pack(fill="both", expand=True, padx=10, pady=8)
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=10, pady=8)
 
-        lbf = ttk.LabelFrame(bot, text="Журнал", padding=4)
-        lbf.pack(fill="both", expand=True)
+        # вкладка «Журнал»
+        tab_log = ttk.Frame(nb, padding=4)
+        nb.add(tab_log, text="Журнал")
         self.log_text = scrolledtext.ScrolledText(
-            lbf, height=12, state="disabled", font=("Consolas", 9), wrap="word"
+            tab_log, height=12, state="disabled", font=("Consolas", 9), wrap="word"
         )
         self.log_text.pack(fill="both", expand=True)
+
+        # вкладка «Подбор прокси»
+        tab_px = ttk.Frame(nb, padding=4)
+        nb.add(tab_px, text="Подбор прокси")
+
+        self.pb_summary = tk.Label(
+            tab_px, text="Подбор ещё не запускался", anchor="w",
+            font=("Segoe UI", 9), bg="#f0f0f0", fg="#333333",
+        )
+        self.pb_summary.pack(fill="x", pady=(0, 4))
+
+        px_lab = ttk.LabelFrame(tab_px, text="Последние проверенные прокси", padding=2)
+        px_lab.pack(fill="both", expand=True, pady=(0, 4))
+        self.px_tree = ttk.Treeview(
+            px_lab, columns=("addr", "type", "res", "time"), show="headings", height=8
+        )
+        self.px_tree.heading("addr", text="Адрес:Порт")
+        self.px_tree.heading("type", text="Тип")
+        self.px_tree.heading("res", text="Результат")
+        self.px_tree.heading("time", text="Время")
+        self.px_tree.column("addr", width=170)
+        self.px_tree.column("type", width=70)
+        self.px_tree.column("res", width=80)
+        self.px_tree.column("time", width=70)
+        vs1 = ttk.Scrollbar(px_lab, orient="vertical", command=self.px_tree.yview)
+        self.px_tree.configure(yscrollcommand=vs1.set)
+        self.px_tree.pack(side="left", fill="both", expand=True)
+        vs1.pack(side="right", fill="y")
+
+        src_lab = ttk.LabelFrame(tab_px, text="Источники прокси", padding=2)
+        src_lab.pack(fill="x")
+        self.src_tree = ttk.Treeview(
+            src_lab, columns=("url", "added", "received"), show="headings", height=6
+        )
+        self.src_tree.heading("url", text="Источник")
+        self.src_tree.heading("added", text="Добавлено")
+        self.src_tree.heading("received", text="Получено из списка")
+        self.src_tree.column("url", width=380)
+        self.src_tree.column("added", width=90)
+        self.src_tree.column("received", width=140)
+        self.src_tree.pack(fill="x")
 
         # автозапуск
         self.auto_var = tk.BooleanVar(value=bool(self.cfg.get("auto_start", True)))
@@ -1104,6 +1226,53 @@ class AppGUI:
         self._refresh_view()
         try:
             self.root.after(250, self._poll)
+        except Exception:
+            pass
+
+    def _poll_proxy(self):
+        self._refresh_proxy()
+        try:
+            self.root.after(1000, self._poll_proxy)
+        except Exception:
+            pass
+
+    def _refresh_proxy(self):
+        st = self.ctl.pb2_stats()
+        if not st or not st.get("sources"):
+            self.pb_summary.config(text="Подбор ещё не запускался")
+            return
+        try:
+            self.pb_summary.config(
+                text=(
+                    f"Всего найдено: {st.get('total', 0)} · Рабочих (в последних проверках): "
+                    f"{st.get('working', 0)} · Источников: {len(st.get('sources', []))}"
+                )
+            )
+            existing = {}
+            for item in self.px_tree.get_children():
+                vals = self.px_tree.item(item, "values")
+                if vals:
+                    existing[vals[0]] = item
+            for p in st.get("proxies", []):
+                key = f"{p['host']}:{p['port']}"
+                row = (key, p["type"], "рабочий" if p["ok"] else "отказ", p.get("time", ""))
+                if key in existing:
+                    self.px_tree.item(existing[key], values=row)
+                else:
+                    self.px_tree.insert("", 0, values=row)
+                    if p["ok"] and key not in self._seen_px:
+                        self._seen_px.add(key)
+                        if len(self._seen_px) > 2000:
+                            self._seen_px.clear()
+                        self._append_log("INFO", f"Рабочий прокси: {key} [{p['type']}]")
+            rows = self.px_tree.get_children()
+            if len(rows) > 350:
+                for item in rows[350:]:
+                    self.px_tree.delete(item)
+            for i in self.src_tree.get_children():
+                self.src_tree.delete(i)
+            for s in st.get("sources", []):
+                self.src_tree.insert("", "end", values=(s["url"], s["added"], s["received"]))
         except Exception:
             pass
 
