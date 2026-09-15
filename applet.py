@@ -33,11 +33,17 @@ from typing import Optional
 
 import requests
 
-BASE = Path(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = BASE / "config.json"
-RUN_DIR = BASE / "run"
-LOG_DIR = BASE / "logs"
-PID_DIR = BASE / "logs"
+if getattr(sys, "frozen", False):
+    BASE = Path(sys.executable).resolve().parent
+    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "RegionSpoof"
+else:
+    BASE = Path(__file__).resolve().parent
+    DATA_DIR = BASE
+
+CONFIG_PATH = DATA_DIR / "config.json"
+RUN_DIR = DATA_DIR / "run"
+LOG_DIR = DATA_DIR / "logs"
+PID_DIR = DATA_DIR / "logs"
 
 STRATEGIES = ["system", "singbox", "mihomo"]
 STRATEGY_NAMES = {
@@ -106,6 +112,10 @@ def save_config(cfg: dict):
 
 
 def find_pb2() -> Optional[str]:
+    for base in app_dirs():
+        for p in (base / "pb2.exe", base / "proxybroker2.exe"):
+            if p.is_file():
+                return str(p)
     for name in ("pb2", "proxybroker2"):
         p = shutil.which(name)
         if p:
@@ -113,24 +123,55 @@ def find_pb2() -> Optional[str]:
     return None
 
 
+def ensure_data_dirs() -> None:
+    """Готовит рабочую папку данных: копирует заводской config.json, если его нет."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RUN_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(exist_ok=True)
+    if not CONFIG_PATH.exists():
+        for base in app_dirs():
+            try:
+                shutil.copy(base / "config.json", CONFIG_PATH)
+                break
+            except Exception:
+                continue
+
+
+def is_first_launch() -> bool:
+    return not (DATA_DIR / "first_run.done").exists()
+
+
+def mark_first_launch_done():
+    try:
+        (DATA_DIR / "first_run.done").write_text("1", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def app_dirs() -> list:
+    dirs = [BASE]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        dirs.append(Path(meipass))
+    return dirs
+
+
 def find_binary(subdir: str, name_part: str) -> Optional[str]:
-    patterns = [
-        str(BASE / "bin" / subdir / "**" / "*.exe"),
-        str(BASE / "bin" / subdir / "*.exe"),
-    ]
-    for p in patterns:
-        for f in glob.glob(p, recursive=True):
-            bname = os.path.basename(f).lower()
-            if name_part in bname:
-                return f
+    for base in app_dirs():
+        for f in (base / "bin" / subdir).glob("**/*.exe"):
+            if name_part in f.name.lower():
+                return str(f)
     return None
 
 
 def find_wintun() -> Optional[str]:
-    for p in glob.glob(str(BASE / "bin" / "wintun" / "bin" / "amd64" / "wintun.dll")):
-        return p
-    for p in glob.glob(str(BASE / "bin" / "**" / "wintun.dll"), recursive=True):
-        return p
+    for base in app_dirs():
+        for p in (base / "bin" / "wintun" / "bin" / "amd64" / "wintun.dll",
+                  base / "bin" / "wintun.dll"):
+            if p.is_file():
+                return str(p)
+        for f in (base / "bin" / "wintun").glob("**/wintun.dll"):
+            return str(f)
     return None
 
 
@@ -1125,14 +1166,16 @@ class AppGUI:
 
 # ------------------------------------------------------------------ CLI
 def main():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    RUN_DIR.mkdir(exist_ok=True)
     logging.basicConfig(
         filename=str(LOG_DIR / "applet.log"),
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         encoding="utf-8",
     )
-    LOG_DIR.mkdir(exist_ok=True)
-    RUN_DIR.mkdir(exist_ok=True)
+    ensure_data_dirs()
 
     if "--check" in sys.argv:
         cfg = load_config()
@@ -1161,6 +1204,17 @@ def main():
 
     root = tk.Tk()
     gui = AppGUI(cfg, ctl)
+
+    if is_first_launch():
+        mark_first_launch_done()
+        tk.messagebox.showinfo(
+            "Region Spoof — первое запуск",
+            "Привет! Это бесплатная программа для некоммерческого использования.\n\n"
+            "Личные ключи, токены и платные аккаунты не требуются: регион "
+            "достигается через общедоступные прокси выбранной страны.\n\n"
+            "Все данные хранятся только локально и разработчику не отправляются.\n"
+            f"Рабочая папка: {DATA_DIR}",
+        )
 
     icon = None
     if HAVE_TRAY:
