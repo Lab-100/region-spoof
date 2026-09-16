@@ -2,7 +2,7 @@
 ; Сборка: ISCC.exe build\installer.iss
 
 #define MyAppName "Region Spoof"
-#define MyAppVersion "1.0.0-alpha"
+#define MyAppVersion "1.0.0-alpha.2"
 #define MyAppPublisher "Lab-100"
 #define MyAppExeName "RegionSpoof.exe"
 #define MyAppId "405AE587-75F5-450A-B3B4-A3DA604D74EF"
