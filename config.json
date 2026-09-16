@@ -79,6 +79,20 @@
   "last_working": "system",
   "zone": "foreign",
   "proxy_port": 8888,
+  "spare_ports": [
+    8889,
+    8890,
+    8891,
+    8892
+  ],
+  "scan_ports": [
+    8888,
+    8889,
+    8890,
+    8891,
+    8892
+  ],
+  "pb2_start_timeout_sec": 10,
   "check_interval_sec": 45,
   "verify_timeout_sec": 18,
   "failover_threshold": 3,

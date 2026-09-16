@@ -16,9 +16,11 @@ ProxyBroker2 (авто-подбор публичных прокси выбран
 from __future__ import annotations
 
 import ctypes
+import datetime
 import glob
 import json
 import logging
+import logging.handlers
 import os
 import shutil
 import socket
@@ -54,7 +56,11 @@ STRATEGY_NAMES = {
 }
 TUN_STRATEGIES = ["singbox", "mihomo"]
 
+APP_VERSION = "1.2-alpha"
+
 PROXY_PORT_DEFAULT = 8888
+DEFAULT_SPARE_PORTS = [8889, 8890, 8891, 8892]
+DEFAULT_PB2_START_TIMEOUT_SEC = 10
 IS_PROXY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
 
 LOG_Q = queue.Queue()
@@ -75,6 +81,86 @@ def log(msg: str, level: str = "INFO"):
     print(rec, flush=True)
 
 
+def log_action(msg: str):
+    """Логирование действий пользователя с маркером [action] (Р7.3)."""
+    log(f"[action] {msg}")
+
+
+# ------------------------------------------------------------------- logging
+class _IsoTimeFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.datetime.fromtimestamp(record.created).astimezone()
+        return dt.isoformat(timespec="seconds")
+
+
+class _AppletRotatingHandler(logging.handlers.RotatingFileHandler):
+    def rotation_filename(self, default_name):
+        if default_name == self.baseFilename:
+            return default_name
+        stem = os.path.splitext(self.baseFilename)[0]
+        m = re.match(r"^" + re.escape(self.baseFilename) + r"\.(\d+)$", default_name)
+        if m:
+            return f"{stem}.{m.group(1)}.log"
+        return default_name
+
+
+def setup_logging():
+    """Р7.3: инициализация логирования в logs/applet.log с ротацией."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    root.setLevel(logging.INFO)
+    handler = _AppletRotatingHandler(
+        str(LOG_DIR / "applet.log"),
+        maxBytes=2 * 1024 * 1024,
+        backupCount=1,
+        encoding="utf-8",
+    )
+    handler.setFormatter(_IsoTimeFormatter("%(asctime)s %(levelname)s %(message)s"))
+    root.addHandler(handler)
+    root.propagate = False
+
+
+# ------------------------------------------------------------------- ports
+def is_port_free(port: int, host: str = "127.0.0.1") -> bool:
+    """Р7.4: проверка, свободен ли порт (попытка привязки)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind((host, int(port)))
+        finally:
+            s.close()
+        return True
+    except OSError:
+        return False
+
+
+def wait_port_ready(port: int, timeout: float = 10, host: str = "127.0.0.1") -> bool:
+    """Р7.2: ожидание готовности порта (TCP-коннект) в течение timeout."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if is_port_open(host, int(port)):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
+
+
+def parse_int_list(text: str) -> list:
+    """Разбор строки вида «8889, 8890, 8891» в список int."""
+    result = []
+    for part in text.replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        v = int(part)
+        if not (1 <= v <= 65535):
+            raise ValueError(f"Порт вне диапазона 1-65535: {v}")
+        result.append(v)
+    return result
+
+
 def load_config() -> dict:
     if CONFIG_PATH.exists():
         try:
@@ -86,6 +172,8 @@ def load_config() -> dict:
             )
             if "strategies" not in cfg:
                 cfg["strategies"] = list(STRATEGIES)
+            cfg.setdefault("spare_ports", DEFAULT_SPARE_PORTS)
+            cfg.setdefault("pb2_start_timeout_sec", DEFAULT_PB2_START_TIMEOUT_SEC)
             return cfg
         except Exception as e:
             log(f"Не удалось прочитать config.json: {e}", "WARNING")
@@ -97,6 +185,8 @@ def load_config() -> dict:
         "last_working": "system",
         "zone": "foreign",
         "proxy_port": PROXY_PORT_DEFAULT,
+        "spare_ports": DEFAULT_SPARE_PORTS,
+        "pb2_start_timeout_sec": DEFAULT_PB2_START_TIMEOUT_SEC,
         "check_interval_sec": 45,
         "verify_timeout_sec": 18,
         "failover_threshold": 3,
@@ -396,6 +486,13 @@ class RegionSpoof:
         self._pb2_cache: Optional[dict] = None
         self._pb2_mtime: float = 0.0
 
+        # Р7.4/Р7.5: активный порт, запасной, извещения о смене порта
+        self.active_port: Optional[int] = int(cfg.get("proxy_port", PROXY_PORT_DEFAULT))
+        self.spare_port: Optional[int] = None
+        self.port_notice: Optional[dict] = None
+        self.user_error: Optional[str] = None
+        self._scan_done = threading.Event()
+
     # ------------------------------------------------------------------ состояние
     def snapshot(self) -> dict:
         with self.lock:
@@ -408,6 +505,10 @@ class RegionSpoof:
                 "geo": dict(self.geo) if self.geo else None,
                 "last_check": self.last_check_text,
                 "pb2_alive": self.pb2_alive(),
+                "proxy_port": int(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT)),
+                "spare_port": self.cfg.get("spare_port"),
+                "notice": dict(self.port_notice) if self.port_notice else None,
+                "user_error": self.user_error,
             }
 
     def pb2_alive(self) -> bool:
@@ -489,15 +590,213 @@ class RegionSpoof:
         }
         return self._pb2_cache
 
-    # ------------------------------------------------------------------ pb2
-    def _start_pb2(self):
-        if self.pb2_alive():
+    # ------------------------------------------------------------------ порты Р7.4/Р7.5
+    def port_scan_list(self) -> list:
+        """Полный список портов для сканирования: config scan_ports либо
+        основной (proxy_port) + запасные (spare_ports)."""
+        explicit = self.cfg.get("scan_ports")
+        if explicit:
+            return parse_int_list(", ".join(str(p) for p in explicit))
+        primary = int(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT))
+        spares = self.cfg.get("spare_ports", DEFAULT_SPARE_PORTS)
+        return parse_int_list(", ".join(str(p) for p in [primary] + list(spares)))
+
+    def scan_free_ports(self):
+        """Р7.4: первые два свободных порта из списка сканирования (основной + запасной)."""
+        free = [p for p in self.port_scan_list() if is_port_free(p)]
+        if len(free) >= 2:
+            return free[0], free[1]
+        if free:
+            return free[0], None
+        return None, None
+
+    def scan_ports_init(self):
+        """Фоновый автоскан портов при старте приложения (Р7.4)."""
+        try:
+            main, spare = self.scan_free_ports()
+            with self.lock:
+                old_main = int(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT))
+                if main:
+                    self.cfg["proxy_port"] = main
+                    self.active_port = main
+                if spare:
+                    self.cfg["spare_port"] = spare
+                else:
+                    self.cfg["spare_port"] = None
+            if main:
+                if old_main != main:
+                    log(f"Порт {old_main} занят — новый основной порт {main} (автоскан)", "WARNING")
+                log(f"Автоскан портов: основной {main}, запасной {spare or 'не найден'}")
+            else:
+                log("Автоскан портов: нет свободных портов из списка сканирования", "WARNING")
+            save_config(self.cfg)
+        finally:
+            self._scan_done.set()
+
+    def wait_scan(self, timeout: float = 5.0) -> bool:
+        """Ожидание завершения фонового автоскана портов."""
+        return self._scan_done.wait(timeout)
+
+    def _rescan_spare(self):
+        """Р7.4: повторное сканирование для выбора нового запасного порта."""
+        main = int(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT))
+        spare = None
+        for p in self.port_scan_list():
+            if p == main or not is_port_free(p):
+                continue
+            spare = p
+            break
+        with self.lock:
+            self.cfg["spare_port"] = spare
+        if spare:
+            log(f"Запасной порт: {spare} (повторное сканирование)")
+        else:
+            log("Запасной порт не найден (повторное сканирование)", "WARNING")
+
+    def _warn_port_restart(self, old, new, reason: str):
+        """Р7.5: предупреждение о перезапуске при смене порта (до перезапуска)."""
+        self.port_notice = {
+            "title": f"Порт изменился: {old} → {new}",
+            "text": reason,
+            "ts": time.monotonic(),
+            "expires_after": 30,
+            "active_restart": True,
+        }
+
+    def _announce_port_change(self, old, new, reason: Optional[str], elapsed: float):
+        """Р7.5: итоговое уведомление о перезапуске с указанием времени."""
+        self.port_notice = {
+            "title": f"Порт изменился: {old} → {new}",
+            "text": f"Перезапуск прокси-сервера занял {elapsed:.1f} с"
+                    + (f" · {reason}" if reason else ""),
+            "ts": time.monotonic(),
+            "expires_after": 12,
+            "active_restart": False,
+        }
+
+    def rescan_ports_now(self):
+        """Ручное пересканирование портов (кнопка в GUI), при изменении — перезапуск."""
+        with self.lock:
+            was_running = self.enabled and self.zone == "foreign"
+            old_main = int(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT))
+        main, spare = self.scan_free_ports()
+        if not main:
+            log("Пересканирование портов: свободных портов не найдено", "WARNING")
+            with self.lock:
+                self.user_error = "Нет свободных портов из списка сканирования."
             return
+        with self.lock:
+            self.cfg["proxy_port"] = main
+            self.cfg["spare_port"] = spare
+            self.active_port = main
+        save_config(self.cfg)
+        log(f"Пересканирование портов: основной {main}, запасной {spare or '—'}")
+        if main != old_main:
+            log(f"Порт изменён: {old_main} -> {main}", "WARNING")
+            if was_running:
+                self._warn_port_restart(old_main, main, "Смена порта — перезапуск прокси-сервера…")
+                self._stop_pb2()
+                self.active_port = None
+                self._start_pb2()
+        elif was_running:
+            log("Пересканирование портов: порты не изменились")
+
+    def apply_network_settings(self, main_port: int, spare_ports: list,
+                               scan_ports: Optional[list], check_timeout: int):
+        """Р7.1/Р7.5: применение сетевых настроек из GUI, при смене порта — перезапуск."""
+        with self.lock:
+            was_running = self.enabled and self.zone == "foreign"
+            old_main = int(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT))
+            self.cfg["proxy_port"] = int(main_port)
+            self.cfg["spare_ports"] = list(spare_ports)
+            if scan_ports:
+                self.cfg["scan_ports"] = list(scan_ports)
+            else:
+                self.cfg.pop("scan_ports", None)
+            self.cfg["pb2_start_timeout_sec"] = int(check_timeout)
+        save_config(self.cfg)
+        log(f"Настройки сети сохранены: основной {main_port}, запасные {spare_ports}, "
+            f"таймаут проверки {check_timeout} с")
+        self._rescan_spare()
+        if was_running and main_port != old_main:
+            log(f"Смена порта: {old_main} -> {main_port}, перезапуск ProxyBroker2…", "WARNING")
+            self._warn_port_restart(old_main, main_port, "Смена порта — перезапуск прокси-сервера…")
+            self._stop_pb2()
+            self.active_port = None
+            self._start_pb2()
+
+    def clear_user_error(self):
+        with self.lock:
+            self.user_error = None
+
+    # ------------------------------------------------------------------ pb2
+    def _start_pb2(self) -> bool:
+        """Запуск pb2 с проверкой подъёма и авто-фолбэком (Р7.2, Р7.4).
+
+        Попытки: основной порт, затем запасной. Каждая логируется; если основная
+        не поднялась — выполняется перезапуск на запасном с проверкой результата.
+        """
+        if self.pb2_alive():
+            return True
         exe = find_pb2()
         if not exe:
             log("Утилита ProxyBroker2 (pb2) не найдена. Установите: pip install proxybroker2", "ERROR")
-            return
-        port = self.cfg.get("proxy_port", PROXY_PORT_DEFAULT)
+            self._set_pb2_failed("ProxyBroker2 (pb2.exe) не найден в приложении.")
+            return False
+
+        with self.lock:
+            attempts = [int(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT))]
+            spare = self.cfg.get("spare_port")
+            if spare and int(spare) not in attempts:
+                attempts.append(int(spare))
+        check_timeout = float(self.cfg.get("pb2_start_timeout_sec", DEFAULT_PB2_START_TIMEOUT_SEC))
+
+        for i, port in enumerate(attempts):
+            if i >= 1:
+                # Р7.5: предупреждение до перезапуска на запасном порту
+                with self.lock:
+                    old_p = getattr(self, "active_port", None) or attempts[0]
+                self._warn_port_restart(old_p, port, "Проверка основного порта не прошла — перезапуск прокси-сервера…")
+            started = time.monotonic()
+            if not self._launch_pb2(exe, port):
+                continue
+            if wait_port_ready(port, timeout=check_timeout):
+                elapsed = time.monotonic() - started
+                with self.lock:
+                    old = self.active_port
+                    self.cfg["proxy_port"] = port
+                    self.active_port = port
+                self._rescan_spare()
+                save_config(self.cfg)
+                pn = self.port_notice
+                if pn and pn.get("active_restart"):
+                    pn["text"] = pn.get("text", "").replace(
+                        "…", f" — перезапуск занял {elapsed:.1f} с")
+                    pn["expires_after"] = 12
+                    pn["active_restart"] = False
+                elif old and old != port:
+                    self._announce_port_change(old, port, "фолбэк на свободный порт", elapsed)
+                    log(f"Фолбэк: порт {old} -> {port}, перезапуск занял {elapsed:.1f} с", "WARNING")
+                else:
+                    log(f"ProxyBroker2 поднят: 127.0.0.1:{port} (запуск занял {elapsed:.1f} с)")
+                with self.lock:
+                    self.status = "starting"
+                return True
+            log(
+                f"Проверка порта {port} не прошла за {check_timeout:.0f} с "
+                f"(попытка {i + 1} из {len(attempts)})",
+                "WARNING",
+            )
+            self._stop_pb2()
+
+        self._set_pb2_failed(
+            "Не удалось запустить ProxyBroker2: проверка не прошла на основном и "
+            "запасном портах. См. подробности в журнале."
+        )
+        return False
+
+    def _launch_pb2(self, exe: str, port: int):
+        """Запуск процесса pb2 на указанном порту."""
         args = [
             exe,
             "--timeout", str(self.cfg.get("pb2_timeout_sec", 10)),
@@ -521,9 +820,18 @@ class RegionSpoof:
                 stderr=err,
                 creationflags=0x08000000,
             )
-            log(f"Запущен подбор прокси: страна {self.region.upper()}, порт {port}")
+            log(f"Запуск подбора прокси: страна {self.region.upper()}, порт {port}")
+            return self.pb2_proc
         except Exception as e:
             log(f"Не удалось запустить ProxyBroker2: {e}", "ERROR")
+            self._set_pb2_failed(f"Ошибка запуска ProxyBroker2: {e}")
+            return None
+
+    def _set_pb2_failed(self, text: str):
+        with self.lock:
+            self.status = "error"
+            self.user_error = text
+        log(text, "ERROR")
 
     def _stop_pb2(self):
         p = self.pb2_proc
@@ -725,7 +1033,6 @@ class RegionSpoof:
         interval = max(10, int(self.cfg.get("check_interval_sec", 45)))
         verify_timeout = int(self.cfg.get("verify_timeout_sec", 18))
         threshold = max(1, int(self.cfg.get("failover_threshold", 3)))
-        proxy = f"http://127.0.0.1:{self.cfg.get('proxy_port', PROXY_PORT_DEFAULT)}"
 
         while not self._stop_event.wait(interval):
             try:
@@ -733,6 +1040,8 @@ class RegionSpoof:
                     enabled = self.enabled
                     zone = self.zone
                     strat = self.strategy
+                    # актуальный порт (мог смениться фолбэком/автосканом)
+                    proxy = f"http://127.0.0.1:{self.cfg.get('proxy_port', PROXY_PORT_DEFAULT)}"
                 if not enabled:
                     continue
 
@@ -899,35 +1208,42 @@ def system_tray(cfg: dict, ctl: 'RegionSpoof', root):
         cur_strat = st.get("strategy")
 
         def act_start(_i, _it):
+            log_action("Трей: «Старт»")
             ctl.start()
             refresh()
 
         def act_stop(_i, _it):
+            log_action("Трей: «Стоп»")
             ctl.stop()
             refresh()
 
         def act_check(_i, _it):
+            log_action("Трей: «Проверить регион»")
             threading.Thread(target=ctl.verify_now, daemon=True).start()
 
         def act_exit(_i, _it):
+            log_action("Трей: «Выход»")
             ctl.shutdown()
             icon.stop()
             root.after(0, lambda: (root.quit(), root.destroy()))
 
         def act_zone_to(chosen):
             def fn(_i=None, _it=None):
+                log_action("Трей: зона -> " + ("зарубежье" if chosen == "foreign" else "РФ"))
                 ctl.set_zone(chosen)
                 refresh()
             return fn
 
         def act_region_to(code):
             def fn(_i=None, _it=None):
+                log_action(f"Трей: выбран регион {code}")
                 ctl.set_region(code)
                 refresh()
             return fn
 
         def act_strat_to(s):
             def fn(_i=None, _it=None):
+                log_action(f"Трей: выбрана связка {STRATEGY_NAMES.get(s, s)}")
                 ctl.switch_strategy(s)
                 refresh()
             return fn
@@ -1016,9 +1332,10 @@ class AppGUI:
         self.ctl = ctl
         self.quit_requested = False
         self._seen_px: set = set()
+        self._last_user_error: Optional[str] = None
 
         self.root = tk.Tk()
-        self.root.title("Region Spoof — смена региона")
+        self.root.title(f"Region Spoof — смена региона  v{APP_VERSION}")
         try:
             self.root.geometry("720x520")
             self.root.minsize(620, 460)
@@ -1056,6 +1373,11 @@ class AppGUI:
             lab, text="", foreground="#555555", bg="#f0f0f0", font=("Segoe UI", 9)
         )
         self.detail_lbl.pack(anchor="w")
+
+        self.port_lbl = tk.Label(
+            lab, text="", foreground="#333333", bg="#f0f0f0", font=("Segoe UI", 9)
+        )
+        self.port_lbl.pack(anchor="w")
 
         # управление
         ctrl = ttk.LabelFrame(self.root, text="Управление", padding=8)
@@ -1162,6 +1484,51 @@ class AppGUI:
         self.src_tree.column("received", width=140)
         self.src_tree.pack(fill="x")
 
+        # вкладка «Сеть» (Р7.1: гибкие настройки портов и таймаутов)
+        tab_net = ttk.Frame(nb, padding=8)
+        nb.add(tab_net, text="Сеть")
+
+        net_box = ttk.LabelFrame(tab_net, text="Порты и проверка", padding=8)
+        net_box.pack(fill="x", pady=(0, 6))
+
+        row = ttk.Frame(net_box)
+        row.pack(fill="x", pady=3)
+        ttk.Label(row, text="Основной порт:").pack(side="left")
+        self.net_main_var = tk.StringVar(value=str(self.cfg.get("proxy_port", PROXY_PORT_DEFAULT)))
+        ttk.Entry(row, textvariable=self.net_main_var, width=8).pack(side="left", padx=(4, 16))
+        ttk.Label(row, text="Таймаут подъёма pb2 (с):").pack(side="left")
+        self.net_timeout_var = tk.StringVar(
+            value=str(self.cfg.get("pb2_start_timeout_sec", DEFAULT_PB2_START_TIMEOUT_SEC))
+        )
+        ttk.Entry(row, textvariable=self.net_timeout_var, width=6).pack(side="left", padx=(4, 0))
+
+        row2 = ttk.Frame(net_box)
+        row2.pack(fill="x", pady=3)
+        ttk.Label(row2, text="Запасные порты (через запятую):").pack(side="left")
+        self.net_spares_var = tk.StringVar(
+            value=", ".join(str(p) for p in self.cfg.get("spare_ports", DEFAULT_SPARE_PORTS))
+        )
+        ttk.Entry(row2, textvariable=self.net_spares_var, width=24).pack(side="left", padx=(4, 0))
+
+        row3 = ttk.Frame(net_box)
+        row3.pack(fill="x", pady=3)
+        ttk.Label(row3, text="Список сканирования (пусто = основной + запасные):").pack(side="left")
+        self.net_scan_var = tk.StringVar(
+            value=", ".join(str(p) for p in self.cfg.get("scan_ports") or [])
+            if self.cfg.get("scan_ports") else ""
+        )
+        ttk.Entry(row3, textvariable=self.net_scan_var, width=28).pack(side="left", padx=(4, 0))
+
+        self.net_actual_lbl = tk.Label(
+            net_box, text="", anchor="w", fg="#333333", font=("Segoe UI", 9), bg="#ececec"
+        )
+        self.net_actual_lbl.pack(fill="x", pady=(6, 0))
+
+        btn_row = ttk.Frame(net_box)
+        btn_row.pack(fill="x", pady=(6, 0))
+        ttk.Button(btn_row, text="Применить и сохранить", command=self._on_net_apply).pack(side="left")
+        ttk.Button(btn_row, text="Пересканировать порты", command=self._on_net_rescan).pack(side="left", padx=(6, 0))
+
         # автозапуск
         self.auto_var = tk.BooleanVar(value=bool(self.cfg.get("auto_start", True)))
         ttk.Checkbutton(
@@ -1171,14 +1538,17 @@ class AppGUI:
 
     # ------------------------------------------------------------ действия
     def _on_start(self):
+        log_action("Нажата кнопка «Старт»")
         threading.Thread(target=self.ctl.start, daemon=True).start()
         self._refresh_view()
 
     def _on_stop(self):
+        log_action("Нажата кнопка «Стоп»")
         threading.Thread(target=self.ctl.stop, daemon=True).start()
         self._refresh_view()
 
     def _on_check(self):
+        log_action("Нажата кнопка «Проверить регион»")
         new = self.ctl.snapshot()
         if new.get("status") == "on":
             threading.Thread(target=self.ctl.verify_now, daemon=True).start()
@@ -1188,6 +1558,7 @@ class AppGUI:
     def _on_zone_toggle(self):
         z = "foreign" if self.zone_var.get() else "ru"
         if z != self.ctl.snapshot().get("zone"):
+            log_action("Переключена зона: " + ("зарубежье" if z == "foreign" else "РФ"))
             threading.Thread(target=lambda: self.ctl.set_zone(z), daemon=True).start()
         self._refresh_view()
 
@@ -1195,6 +1566,7 @@ class AppGUI:
         val = self.region_var.get()
         code = val.split("(")[-1].rstrip(")").strip()
         if code:
+            log_action(f"Выбран регион: {code}")
             threading.Thread(target=lambda: self.ctl.set_region(code), daemon=True).start()
         self._refresh_view()
 
@@ -1203,14 +1575,48 @@ class AppGUI:
         rev = {v: k for k, v in STRATEGY_NAMES.items()}
         s = rev.get(val, val)
         if s != self.ctl.snapshot().get("strategy"):
+            log_action(f"Выбрана связка: {val}")
             threading.Thread(target=lambda: self.ctl.switch_strategy(s), daemon=True).start()
         self._refresh_view()
 
     def _on_auto_toggle(self):
+        log_action("Изменён автозапуск: " + ("вкл" if self.auto_var.get() else "выкл"))
         self.cfg["auto_start"] = self.auto_var.get()
         save_config(self.cfg)
 
+    def _on_net_apply(self):
+        try:
+            main = int(self.net_main_var.get().strip())
+            if not (1 <= main <= 65535):
+                raise ValueError("порт вне диапазона")
+            spares = parse_int_list(self.net_spares_var.get())
+            scan = parse_int_list(self.net_scan_var.get()) or None
+            timeout = max(1, int(self.net_timeout_var.get().strip()))
+        except (ValueError, TypeError):
+            self._append_log(
+                "ERROR",
+                "Сетевые настройки: введены некорректные значения "
+                "(порты 1-65535, таймаут ≥ 1 с).",
+            )
+            return
+        log_action(
+            f"Применены сетевые настройки: основной {main}, "
+            f"запасные {spares}, сканирование {scan or 'авто'}, таймаут {timeout} с"
+        )
+        threading.Thread(
+            target=self.ctl.apply_network_settings,
+            args=(main, spares, scan, timeout),
+            daemon=True,
+        ).start()
+        self._refresh_view()
+
+    def _on_net_rescan(self):
+        log_action("Нажата кнопка «Пересканировать порты»")
+        threading.Thread(target=self.ctl.rescan_ports_now, daemon=True).start()
+        self._refresh_view()
+
     def _on_exit(self):
+        log_action("Нажата кнопка «Выйти»")
         self.quit_requested = True
         threading.Thread(target=self.ctl.shutdown, daemon=True).start()
         time.sleep(0.3)
@@ -1315,6 +1721,45 @@ class AppGUI:
         self.btn_start.config(state="disabled" if enabled else "normal")
         self.btn_stop.config(state="normal" if enabled else "disabled")
 
+        # Р7.5: индикация перезапуска при смене порта (счётчик времени)
+        notice = st.get("notice")
+        if notice:
+            elapsed = time.monotonic() - notice.get("ts", time.monotonic())
+            left = notice.get("expires_after", 12) - elapsed
+            if left > 0:
+                self.port_lbl.config(
+                    text=f"{notice.get('title', '')} · {notice.get('text', '')} "
+                         f"(прошло {elapsed:.0f} с)",
+                    foreground="#b26a00",
+                )
+            else:
+                self.port_lbl.config(text="", foreground="#333")
+        else:
+            main_p = st.get("proxy_port") or "-"
+            spare_p = st.get("spare_port")
+            base = f"Порт: {main_p}"
+            if spare_p:
+                base += f" · запасной: {spare_p}"
+            self.port_lbl.config(text=base, foreground="#333")
+
+        # Р7.2: сообщение об ошибке пользователю (не крашим приложение)
+        err = st.get("user_error")
+        if err and err != self._last_user_error:
+            self._last_user_error = err
+            self.root.after(0, lambda e=err: tk.messagebox.showerror("Region Spoof", e))
+            self.ctl.clear_user_error()
+        elif not err:
+            pass
+
+        # фактическое состояние портов во вкладке «Сеть»
+        try:
+            self.net_actual_lbl.config(
+                text=f"Фактически: основной {st.get('proxy_port') or '-'}, "
+                     f"запасной {st.get('spare_port') or '—'}"
+            )
+        except Exception:
+            pass
+
     def _drain_log(self):
         try:
             while True:
@@ -1338,12 +1783,7 @@ def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     RUN_DIR.mkdir(exist_ok=True)
-    logging.basicConfig(
-        filename=str(LOG_DIR / "applet.log"),
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        encoding="utf-8",
-    )
+    setup_logging()
     ensure_data_dirs()
 
     if "--check" in sys.argv:
@@ -1371,6 +1811,9 @@ def main():
     cfg = load_config()
     ctl = RegionSpoof(cfg)
 
+    # Р7.4: фоновый автоскан портов (основной + запасной из списка сканирования)
+    threading.Thread(target=ctl.scan_ports_init, daemon=True).start()
+
     root = tk.Tk()
     gui = AppGUI(cfg, ctl)
 
@@ -1397,7 +1840,9 @@ def main():
     ctl.start_engine()
 
     if cfg.get("auto_start", True):
-        threading.Thread(target=ctl.start, daemon=True).start()
+        threading.Thread(
+            target=lambda: (ctl.wait_scan(5), ctl.start()), daemon=True
+        ).start()
 
     def _tray_poll():
         if icon is not None and not gui.quit_requested:
