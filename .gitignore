@@ -7,3 +7,10 @@ build/*/
 dist/
 out/
 *.log
+
+# Защита секретов
+*.env
+auth.json
+secrets/
+*.pem
+*.key
