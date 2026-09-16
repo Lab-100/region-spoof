@@ -8,8 +8,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-python -m pip install --upgrade pip
-python -m pip install proxybroker2 pystray Pillow requests
+python -m pip install --disable-pip-version-check --timeout 60 --retries 1 proxybroker2 pystray Pillow requests
 echo.
 echo Зависимости установлены. Запустите run.bat
 pause
