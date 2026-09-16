@@ -32,7 +32,7 @@
 
 ### Способ 1. Инсталлятор (рекомендуется)
 
-Скачайте `RegionSpoof-1.0.0-alpha.2-Setup.exe` со страницы
+Скачайте `RegionSpoof-1.1-alpha-Setup.exe` со страницы
 [Releases](/Lab-100/region-spoof/releases), запустите его и следуйте мастеру.
 Инсталлятор:
 
