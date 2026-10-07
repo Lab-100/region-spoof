@@ -34,9 +34,11 @@
 - **`build/installer.iss`**: версия 1.3-alpha (`VersionInfoVersion=1.3.0`),
   установка файлов `LICENSE` и `NOTICE` вместо `LICENSE.txt`.
 - **`applet.py`**: обновлён `APP_VERSION = "1.3-alpha"` (только версия).
-- **Известная нерешённая задача**: пересборка установщика
-  `RegionSpoof-1.3-alpha-Setup.exe` НЕ выполнена — Inno Setup (ISCC.exe)
-  в системе не установлен; последний собранный установщик — 1.2-alpha.
+- **Установщик 1.3-alpha (решено)**: пересборка `RegionSpoof-1.3-alpha-Setup.exe`
+  выполнена — Inno Setup 6.7.3 установлен в окружение сборки; `applet.py` и
+  `pb2_runner.py` собраны через PyInstaller 6.22.3 в `dist\RegionSpoof\`
+  (`RegionSpoof.exe`, `pb2.exe`, `bin\`), установщик собран ISCC из
+  `build\installer.iss` и загружен в релиз `v1.3-alpha` (79,6 МБ).
 - **Wintun (решено)**: TUN-драйвер `wintun.dll` добавлен в релиз отдельным
   вложением `region-spoof-bin-wintun.zip` — официальная сборка 0.14.1 с
   wintun.net, подпись WireGuard LLC (DigiCert EV) проверена как `Valid`;
