@@ -1,8 +1,7 @@
-; Region Spoof — инсталлятор (Inno Setup 7)
+; Region Spoof — инсталлятор (Inno Setup 6)
 ; Сборка: ISCC.exe build\installer.iss
-; ВНИМАНИЕ: Inno Setup (ISCC.exe) в среде разработки НЕ установлен,
-; поэтому сборка установщика 1.3-alpha отложена — известная
-; нерешённая задача (см. CHANGELOG.md, раздел 1.3-alpha).
+; Inno Setup установлен в окружение сборки (версия 6.7.3), установщик 1.3-alpha
+; собирается штатно. Исходники установщика — dist\RegionSpoof\* (см. [Files]).
 
 #define MyAppName "Region Spoof"
 #define MyAppVersion "1.3-alpha"
