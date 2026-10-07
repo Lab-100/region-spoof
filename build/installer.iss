@@ -1,8 +1,11 @@
 ; Region Spoof — инсталлятор (Inno Setup 7)
 ; Сборка: ISCC.exe build\installer.iss
+; ВНИМАНИЕ: Inno Setup (ISCC.exe) в среде разработки НЕ установлен,
+; поэтому сборка установщика 1.3-alpha отложена — известная
+; нерешённая задача (см. CHANGELOG.md, раздел 1.3-alpha).
 
 #define MyAppName "Region Spoof"
-#define MyAppVersion "1.2-alpha"
+#define MyAppVersion "1.3-alpha"
 #define MyAppPublisher "Lab-100"
 #define MyAppExeName "RegionSpoof.exe"
 #define MyAppId "405AE587-75F5-450A-B3B4-A3DA604D74EF"
@@ -31,10 +34,11 @@ UninstallDisplayName={#MyAppName} {#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-VersionInfoVersion=1.2.0
+VersionInfoVersion=1.3.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Region Spoof Applet (альфа)
-LicenseFile=..\LICENSE.txt
+; Лицензия проекта: GPL-3.0, полный текст — в файле LICENSE
+LicenseFile=..\LICENSE
 CloseApplications=yes
 RestartApplications=no
 
@@ -53,7 +57,8 @@ Type: filesandordirs; Name: "{localappdata}\RegionSpoof\logs"
 [Files]
 Source: "..\dist\RegionSpoof\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\dist\RegionSpoof\pb2.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]

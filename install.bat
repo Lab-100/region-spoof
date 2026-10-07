@@ -10,5 +10,15 @@ if errorlevel 1 (
 )
 python -m pip install --disable-pip-version-check --timeout 60 --retries 1 proxybroker2 pystray Pillow requests
 echo.
+echo Загрузка бинарников (sing-box, mihomo, wintun) из Releases с проверкой SHA256...
+python "%~dp0download_binaries.py"
+if errorlevel 1 (
+    echo.
+    echo ВНИМАНИЕ: бинарники не загружены или не прошли проверку SHA256.
+    echo Связки singbox/mihomo будут недоступны, но системный прокси
+    echo работает и без них. Повторите install.bat или скачайте бинарники
+    echo вручную - см. README, раздел "Установка".
+)
+echo.
 echo Зависимости установлены. Запустите run.bat
 pause

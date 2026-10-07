@@ -8,6 +8,12 @@ dist/
 out/
 *.log
 
+# Сторонние бинарники (sing-box, mihomo, wintun) в git не хранятся:
+# скачиваются из GitHub Releases скриптом download_binaries.py
+# (проверка SHA256 обязательна). Плейсхолдер каталога разрешён.
+bin/
+!bin/.gitkeep
+
 # Защита секретов
 *.env
 auth.json
