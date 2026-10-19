@@ -43,7 +43,8 @@
 - **README**: расширены «Кредиты» — благодарности авторам публичных
   источников списков прокси (TheSpeedX, monosans, proxifly, roosterkid,
   spys.me, ProxyScrape, GeoNode) и публичных judge-сервисов (httpbingo,
-  httpbin, azenv) и сервисов проверки региона (ip-api.com, ipinfo.io, ipapi.co).
+  httpbin, httpheader.net, wfuchs.de, echo.free.beeceptor.com) и сервисов
+  проверки региона (ip-api.com, ipinfo.io, ipapi.co).
 
 ## 1.3-alpha
 
