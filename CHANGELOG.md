@@ -14,12 +14,22 @@
   proxyscrape v4 (фильтр US), geonode (US), TheSpeedX, monosans, proxifly,
   spys.me, встроенный proxyscrape и roosterkid. Проверено: geonode отдаёт десятки
   актуальных US-прокси.
-- **Заменены мёртвые judge-сервисы** (`PB2_EXTRA_JUDGES`): встроенный набор
-  proxybroker2 (httpbin.org, proxyjudge.us, зеркала azenv) целиком таймаутил —
-  проверка прокси не работала. Добавлены живые judge с эхо заголовков
-  (httpbingo.org/headers, httpbin.org/get?show_env, azenv.net) — проверка
-  прокси возобновилась. Остаточная нестабильность HTTP-судьи отмечена (влияет
-  только на доступность типа SOCKS5; HTTPS-прокси подбираются стабильно).
+- **Заменены мёртвые judge-сервисы и устранена их нестабильность**
+  (`PB2_EXTRA_JUDGES`): встроенный набор proxybroker2 (httpbin.org,
+  proxyjudge.us, зеркала azenv) целиком таймаутил — проверка прокси не работала.
+  Теперь в наборе **7 судей с эхо заголовков**, по несколько кандидатов на каждый
+  протокол: HTTP — httpbingo.org/headers, httpbin.org/get?show_env,
+  httpheader.net/azenv.php, www.wfuchs.de/azenv.php; HTTPS — httpbingo,
+  httpbin, echo.free.beeceptor.com (все проверены curl: 200 + эхо User-Agent +
+  IP; azenv.net убран — отдаёт 000/таймаут).
+- **Найдена и устранена причина «0 judges added»**: при старте pb2 параллельно
+  качаются 8 провайдеров, и судьи не укладывались в прежний `--timeout 10`
+  (в конфиге параметра `pb2_timeout_sec` вообще не было — брался дефолт 10,
+  в локальном конфиге — 10). Поднят таймаут проверок: дефолт в `applet.py`
+  10 → 30, в `config.json` добавлен `pb2_timeout_sec: 30`,
+  `pb2_start_timeout_sec` 15 → 30. Результат одиночного прогона:
+  **`7 judges added. Runtime: 19.36`** (4 HTTP + 3 HTTPS), пул прокси сразу
+  пошёл в проверку (SOCKS5-прокси отвечают через судей, rv-проверка проходит).
 - **Исправлена сборка `pb2.exe`**: в дистрибутив добавлена база стран
   `GeoLite2-Country.mmdb` (без неё `pb2.exe` падал с `FileNotFoundError`, порт
   не открывался) — первопричина «спуфинга вслепую».

@@ -81,10 +81,18 @@ PB2_EXTRA_PROVIDERS = [
 PB2_EXTRA_JUDGES = [
     # Judge-сервисы с ЭХОМ заголовков (проверка на rv+IP). Приоритет — httpbingo (быстрый),
     # httpbin — резерв. Убираем azenv.net (нестабилен при старте, даёт Timeout).
+    # Резервные судьи добавлены 2026-10-20: публичные судьи мелькают (то HTTP,
+    # то HTTPS отваливается по Timeout), поэтому на каждый протокол держим
+    # несколько кандидатов (все проверены curl: 200 + эхо User-Agent + IP).
+    # HTTP: httpbingo, httpbin, httpheader.net, wfuchs.de;
+    # HTTPS: httpbingo, httpbin, echo.free.beeceptor.com.
     "http://httpbingo.org/headers",
     "https://httpbingo.org/headers",
     "http://httpbin.org/get?show_env",
     "https://httpbin.org/get?show_env",
+    "http://httpheader.net/azenv.php",
+    "http://www.wfuchs.de/azenv.php",
+    "https://echo.free.beeceptor.com/api",
 ]
 IS_PROXY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
 
@@ -824,7 +832,11 @@ class RegionSpoof:
         """Запуск процесса pb2 на указанном порту."""
         args = [
             exe,
-            "--timeout", str(self.cfg.get("pb2_timeout_sec", 10)),
+            # pb2_timeout_sec — таймаут ОДНОЙ проверки (судья/прокси) внутри pb2.
+            # Дефолт поднят 10→30 (2026-10-20): при старте pb2 параллельно качает
+            # 8 провайдеров, и судьи под пиковой нагрузкой не укладывались в 10–15 с
+            # (все 7 судей Timeout → 0 judges added → пул не проверялся).
+            "--timeout", str(self.cfg.get("pb2_timeout_sec", 30)),
             "--log", "DEBUG",
         ]
         for purl in PB2_EXTRA_PROVIDERS:

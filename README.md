@@ -220,8 +220,10 @@
 | Сервис | Что даёт | Спасибо |
 | --- | --- | --- |
 | [httpbingo.org](https://httpbingo.org/) | проверка анонимности прокси (echo заголовков) | авторам httpbingo |
-| [httpbin.org](https://httpbin.org/) | проверка анонимности прокси (резерв) | авторам httpbin |
-| [azenv.net](https://azenv.net/) | проверка анонимности прокси (резерв) | авторам azenv |
+| [httpbin.org](https://httpbin.org/) | проверка анонимности прокси | авторам httpbin |
+| [httpheader.net](http://httpheader.net/azenv.php) | проверка анонимности прокси (резерв) | авторам httpheader.net |
+| [wfuchs.de](http://www.wfuchs.de/azenv.php) | проверка анонимности прокси (резерв) | авторам wfuchs.de |
+| [echo.free.beeceptor.com](https://echo.free.beeceptor.com/) | проверка анонимности прокси (резерв HTTPS) | Beeceptor |
 | [ip-api.com](http://ip-api.com/) / [ipinfo.io](https://ipinfo.io/) / [ipapi.co](https://ipapi.co/) | проверка фактического региона | авторам сервисов |
 
 Полный текст лицензии — в файле [LICENSE](LICENSE); условия использования
