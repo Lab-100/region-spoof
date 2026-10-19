@@ -48,11 +48,13 @@
 - **не требует предустановленного Python** — среда, библиотеки и утилиты
   упакованы вместе с приложением.
 
-> **Примечание для 1.4-alpha:** версия исправляет запуск без рабочего
-> ProxyBroker2 (системный прокси больше не включается «вслепую») и расширяет
-> источники списков прокси и judge-сервисы. Если установщик этой версии ещё
-> не собран, используйте «Способ 2» либо установщик предыдущей версии
-> `RegionSpoof-1.3-alpha-Setup.exe`.
+> **Примечание для 1.4-alpha:** установщик `RegionSpoof-1.4-alpha-Setup.exe`
+> собран и приложен к релизу. Версия исправляет запуск без рабочего
+> ProxyBroker2 (системный прокси больше не включается «вслепую»), расширяет
+> источники списков прокси и judge-сервисы; `pb2.exe` включает базу стран
+> GeoLite2 (раньше её отсутствие роняло подбор). Тяжёлые бинарники
+> (sing-box, mihomo, wintun) ставятся скриптом `download_binaries.py`
+> из вложений релиза `v1.3-alpha` с проверкой SHA256.
 
 ### Способ 2. Из исходников
 
@@ -177,7 +179,10 @@
 
 ## Кредиты
 
-Проект собран из свободных программ — огромное спасибо их авторам за работу:
+Проект собран из свободных программ и публичных сервисов — огромное спасибо
+их авторам за работу:
+
+### Библиотеки и движки (код)
 
 | Проект | Назначение | Лицензия |
 | --- | --- | --- |
@@ -194,6 +199,30 @@
 | [Inno Setup](https://jrsoftware.org/isinfo.php) | инсталлятор | Inno Setup License |
 | [MaxMind GeoLite2](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data/) | база стран по IP | CC BY-SA 4.0 |
 | [Wintun](https://www.wintun.net/) | TUN-драйвер Windows (для TUN-связок) | GPLv2 (код) · Prebuilt Binaries License (wintun.dll) |
+
+### Источники списков прокси (благодарности авторам публичных списков)
+
+Списки прокси для подбора загружаются из публичных источников — спасибо
+их создателям за поддержку открытых данных:
+
+| Источник | Проект | Что берём |
+| --- | --- | --- |
+| [TheSpeedX/PROXY-List](https://github.com/TheSpeedX/PROXY-List) | свободный список (public domain) | raw-списки HTTP-прокси |
+| [monosans/proxy-list](https://github.com/monosans/proxy-list) | свободный список (MIT) | raw-списки HTTP-прокси |
+| [proxifly/free-proxy-list](https://github.com/proxifly/free-proxy-list) | свободный список (MIT) | raw-списки HTTP-прокси |
+| [roosterkid/openproxylist](https://github.com/roosterkid/openproxylist) | свободный список (MIT) | raw-списки HTTPS-прокси |
+| [spys.me](https://spys.me/) | публичный каталог прокси | список прокси |
+| [ProxyScrape](https://proxyscrape.com/) | публичный API бесплатных прокси | US-фильтр |
+| [GeoNode](https://geonode.com/) | публичный API бесплатных прокси | US-фильтр |
+
+### Публичные сервисы проверки (judge-сервисы и проверка региона)
+
+| Сервис | Что даёт | Спасибо |
+| --- | --- | --- |
+| [httpbingo.org](https://httpbingo.org/) | проверка анонимности прокси (echo заголовков) | авторам httpbingo |
+| [httpbin.org](https://httpbin.org/) | проверка анонимности прокси (резерв) | авторам httpbin |
+| [azenv.net](https://azenv.net/) | проверка анонимности прокси (резерв) | авторам azenv |
+| [ip-api.com](http://ip-api.com/) / [ipinfo.io](https://ipinfo.io/) / [ipapi.co](https://ipapi.co/) | проверка фактического региона | авторам сервисов |
 
 Полный текст лицензии — в файле [LICENSE](LICENSE); условия использования
 и кредиты сторонним авторам — в файле [NOTICE](NOTICE).

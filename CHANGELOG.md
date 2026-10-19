@@ -24,9 +24,16 @@
   `GeoLite2-Country.mmdb` (без неё `pb2.exe` падал с `FileNotFoundError`, порт
   не открывался) — первопричина «спуфинга вслепую».
 - **Версия**: `applet.py` → `APP_VERSION = "1.4-alpha"`, `build/installer.iss`
-  → `1.4-alpha` (`VersionInfoVersion=1.4.0`); `RegionSpoof.exe` пересобран.
-  Тег релиза бинарников в `download_binaries.py` не меняется (остаётся
-  `v1.3-alpha` — там лежат sing-box/mihomo/wintun).
+  → `1.4-alpha` (`VersionInfoVersion=1.4.0`); `RegionSpoof.exe` пересобран
+  (one-dir, без тяжёлых бинарников — они докачиваются `download_binaries.py`).
+  Установщик `RegionSpoof-1.4-alpha-Setup.exe` собран Inno Setup 7.1.0 и
+  приложен к релизу `v1.4-alpha`. Тег релиза бинарников в
+  `download_binaries.py` не меняется (остаётся `v1.3-alpha` — там лежат
+  sing-box/mihomo/wintun).
+- **README**: расширены «Кредиты» — благодарности авторам публичных
+  источников списков прокси (TheSpeedX, monosans, proxifly, roosterkid,
+  spys.me, ProxyScrape, GeoNode) и публичных judge-сервисов (httpbingo,
+  httpbin, azenv) и сервисов проверки региона (ip-api.com, ipinfo.io, ipapi.co).
 
 ## 1.3-alpha
 
