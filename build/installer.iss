@@ -54,11 +54,15 @@ Type: filesandordirs; Name: "{localappdata}\RegionSpoof\run"
 Type: filesandordirs; Name: "{localappdata}\RegionSpoof\logs"
 
 [Files]
-Source: "..\dist\RegionSpoof\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\dist\RegionSpoof\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; Excludes: bin
 Source: "..\dist\RegionSpoof\pb2.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+; Бинарники TUN-ядер (sing-box, mihomo) и драйвер wintun.dll поставляются отдельными
+; вложениями релиза (region-spoof-bin-*.zip) и скачиваются через download_binaries.py
+; из install.bat. Они не включаются в установщик намеренно — чтобы не раздувать
+; его размер и не дублировать ~140 МБ архивов на каждый релиз.
 
 [Icons]
 Name: "{autodesktop}\Region Spoof"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
