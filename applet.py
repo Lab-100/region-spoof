@@ -56,11 +56,36 @@ STRATEGY_NAMES = {
 }
 TUN_STRATEGIES = ["singbox", "mihomo"]
 
-APP_VERSION = "1.3-alpha"
+APP_VERSION = "1.4-alpha"
 
 PROXY_PORT_DEFAULT = 8888
 DEFAULT_SPARE_PORTS = [8889, 8890, 8891, 8892]
 DEFAULT_PB2_START_TIMEOUT_SEC = 10
+PB2_EXTRA_PROVIDERS = [
+    # Внешние источники списков прокси (проверены 2026-10-15).
+    # ВАЖНО: передача --provider ЗАМЕНЯЕТ встроенный список PROVIDERS в proxybroker2,
+    # поэтому здесь перечислены и свежие источники, и живые встроенные (формат ip:port).
+    # Свежие с фильтром по стране (US):
+    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&country=US&protocol=http&proxy_format=ipport&format=text",
+    "https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&country=US",
+    # Свежие raw-списки (глобальные, отбор по стране делает --countries):
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
+    "https://spys.me/proxy.txt",
+    # Живые встроенные источники proxybroker2 (сохранены, чтобы не сужать пул):
+    "https://api.proxyscrape.com/?request=getproxies&proxytype=http",
+    # Ещё один свежий raw-список (proxy-list.download отдавал 502 — заменён):
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+]
+PB2_EXTRA_JUDGES = [
+    # Judge-сервисы с ЭХОМ заголовков (проверка на rv+IP). Приоритет — httpbingo (быстрый),
+    # httpbin — резерв. Убираем azenv.net (нестабилен при старте, даёт Timeout).
+    "http://httpbingo.org/headers",
+    "https://httpbingo.org/headers",
+    "http://httpbin.org/get?show_env",
+    "https://httpbin.org/get?show_env",
+]
 IS_PROXY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
 
 LOG_Q = queue.Queue()
@@ -801,6 +826,12 @@ class RegionSpoof:
             exe,
             "--timeout", str(self.cfg.get("pb2_timeout_sec", 10)),
             "--log", "DEBUG",
+        ]
+        for purl in PB2_EXTRA_PROVIDERS:
+            args += ["--provider", purl]
+        for jurl in PB2_EXTRA_JUDGES:
+            args += ["--judge", jurl]
+        args += [
             "serve",
             "--host", "127.0.0.1",
             "--port", str(port),
@@ -969,8 +1000,8 @@ class RegionSpoof:
             self.status = "starting"
         log("Старт. Зона: " + ("зарубежье" if self.zone == "foreign" else "РФ"))
         if self.zone == "foreign":
-            self._start_pb2()
-            self._start_strategy(self.strategy)
+            if self._start_pb2():
+                self._start_strategy(self.strategy)
         else:
             self._stop_strategy()
             self._stop_pb2()
@@ -1006,8 +1037,10 @@ class RegionSpoof:
                 self.geo = None
         else:
             self.status = "starting"
-            self._start_pb2()
-            self._start_strategy(self.strategy)
+            if self._start_pb2():
+                self._start_strategy(self.strategy)
+            else:
+                self._stop_strategy()
         self._save_working()
 
     def set_region(self, code: str):
@@ -1055,6 +1088,9 @@ class RegionSpoof:
                     if not self.pb2_alive():
                         with self.lock:
                             self.status = "error"
+                        if strat == "system":
+                            clear_system_proxy()
+                            log("ProxyBroker2 не поднялся — системный прокси выключен, чтобы не обрывать сеть", "ERROR")
                         continue
 
                 active = self._strategy_active(strat)

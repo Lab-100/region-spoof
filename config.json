@@ -92,7 +92,7 @@
     8891,
     8892
   ],
-  "pb2_start_timeout_sec": 10,
+  "pb2_start_timeout_sec": 15,
   "check_interval_sec": 45,
   "verify_timeout_sec": 18,
   "failover_threshold": 3,

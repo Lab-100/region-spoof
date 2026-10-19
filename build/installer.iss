@@ -1,10 +1,10 @@
 ; Region Spoof — инсталлятор (Inno Setup 6)
 ; Сборка: ISCC.exe build\installer.iss
-; Inno Setup установлен в окружение сборки (версия 6.7.3), установщик 1.3-alpha
+; Inno Setup установлен в окружение сборки (версия 6.7.3), установщик 1.4-alpha
 ; собирается штатно. Исходники установщика — dist\RegionSpoof\* (см. [Files]).
 
 #define MyAppName "Region Spoof"
-#define MyAppVersion "1.3-alpha"
+#define MyAppVersion "1.4-alpha"
 #define MyAppPublisher "Lab-100"
 #define MyAppExeName "RegionSpoof.exe"
 #define MyAppId "405AE587-75F5-450A-B3B4-A3DA604D74EF"
@@ -33,7 +33,7 @@ UninstallDisplayName={#MyAppName} {#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-VersionInfoVersion=1.3.0
+VersionInfoVersion=1.4.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Region Spoof Applet (альфа)
 ; Лицензия проекта: GPL-3.0, полный текст — в файле LICENSE
