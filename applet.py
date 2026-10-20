@@ -15,6 +15,7 @@ ProxyBroker2 (авто-подбор публичных прокси выбран
 
 from __future__ import annotations
 
+import atexit
 import ctypes
 import datetime
 import glob
@@ -338,8 +339,11 @@ def clear_system_proxy():
         ) as k:
             winreg.SetValueEx(k, "ProxyEnable", 0, winreg.REG_DWORD, 0)
         _notify_internet_settings()
-    except Exception as e:
-        log(f"Не удалось выключить системный прокси: {e}", "WARNING")
+        except Exception as e:
+            log(f"Не удалось выключить системный прокси: {e}", "WARNING")
+
+
+atexit.register(clear_system_proxy)
 
 
 def is_port_open(host: str, port: int) -> bool:
