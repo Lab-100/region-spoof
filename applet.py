@@ -346,6 +346,27 @@ def clear_system_proxy():
 atexit.register(clear_system_proxy)
 
 
+def cleanup_orphan_proxy():
+    """Снять системный прокси, если он остался включённым от прошлого запуска
+    при жёстком завершении (taskkill /F) — когда pb2 не запущен на 8888."""
+    try:
+        if not is_port_open("127.0.0.1", 8888):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, IS_PROXY_KEY, 0, winreg.KEY_READ) as k:
+                    pe, _ = winreg.QueryValueEx(k, "ProxyEnable")
+                    ps, _ = winreg.QueryValueEx(k, "ProxyServer")
+                if int(pe) == 1 and "127.0.0.1:8888" in str(ps):
+                    clear_system_proxy()
+                    log("Снят висящий системный прокси 127.0.0.1:8888 (предыдущий запуск завершён некорректно)", "INFO")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+cleanup_orphan_proxy()
+
+
 def is_port_open(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=2):
